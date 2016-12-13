@@ -1,3 +1,13 @@
+# json2xml_iknl.py
+
+This script converts the IKNL discussions data from json to XML and tab-separated values (tsv).
+The XML output will be in the directory threads_dir (one thread per file)
+
+```
+python json2xml_iknl.py discussions-formatted.json threads_dir KankerNL_posts.tsv
+```
+
+
 # thread_xml2html.py
 
 This script converts a thread XML file to an HTML file that can be viewed in the web browser.
