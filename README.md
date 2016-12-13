@@ -6,7 +6,14 @@ The XML output will be in the directory threads_dir (one thread per file)
 ```
 python json2xml_iknl.py discussions-formatted.json threads_dir KankerNL_posts.tsv
 ```
+# lda.py
 
+The input directory is expected to contain a list of XML files in the unified forum XML format, as created by json2xml_iknl.py (see dtd below).
+The LDA model is printed to stdout
+
+```
+python lda.py KankerNL_threads
+```
 
 # thread_xml2html.py
 
