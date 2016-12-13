@@ -133,7 +133,7 @@ for threadid in threads:
 
     out = open(out_dir+"/"+threadid+".xml","w")
     out.write("<?xml version=\"1.0\"?>\n")
-    out.write("<forum type=\"nytimes\">\n")
+    out.write("<forum type=\"iknl\">\n")
     thread = threads[threadid]
 
     thread.printXML(out)
