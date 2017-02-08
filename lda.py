@@ -1,5 +1,5 @@
 # coding=utf-8
-# python lda.py KankerNL_threads
+# python lda.py ../forum_threads/KankerNL_threads
 
 # The input directory is expected to contain a list of XML files in the unified forum XML format, as created by json2xml_iknl.py (see dtd below)
 # The LDA model is printed to stdout
