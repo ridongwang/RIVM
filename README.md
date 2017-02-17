@@ -51,6 +51,16 @@ threadid	postid	author	timestamp	body	upvotes	labels
 It makes a 50-50 split in train and test data and reports Precision, Recall and F-scores per categorie in the data (for categories with at least 10 examples in the test set).
 It also prints the list of 10 most important features (words or character 4-grams) per category according to the LogisticRegression model.
 
+# longitudinal.py
+
+Extracts from the XML formatted forum data all authors with more than 30 posts and prints those posts as a tab separated file, ordered by date (the oldest post first). Format:
+```
+threadid	postid	author	timestamp	body	upvotes
+```
+
+This can be used for longitudinal (qualitative) analysis of specific forum authors.
+
+
 # License
 
 See the [LICENSE](LICENSE.md) file for license rights and limitations (GNU-GPL v3.0).
