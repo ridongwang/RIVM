@@ -1,7 +1,8 @@
-# pyton empowerment_classification.py /Users/suzanverberne/Data/FORUM_DATA/RIVM/Kanker.nl/Coding_Remco.txt
+# pyton empowerment_classification.py Directory-with-xlsx-files/
 
 import sys
 import re
+import os
 from sklearn.feature_extraction.text import CountVectorizer
 from sklearn.feature_extraction.text import TfidfTransformer
 from sklearn.naive_bayes import MultinomialNB
@@ -11,39 +12,16 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.ensemble import RandomForestClassifier
 import operator
+from xlrd import open_workbook
 
-posts_with_targets_file = sys.argv[1]
-
-def tokenize(t):
-    text = t.lower()
-    text = re.sub("\n"," ",text)
-    text = re.sub(r'<[^>]+>',"",text) # remove all html markup
-    text = re.sub('[^a-zèéeêëûüùôöòóœøîïíàáâäæãåA-Z0-9- \']', "", text)
-    wrds = text.split()
-    return wrds
+annotations_dir = sys.argv[1]
+annotations_files = []
+for file in os.listdir(annotations_dir):
+    if ".xlsx" in file and not "~" in file:
+        annotations_files.append(annotations_dir+"/"+file)
 
 
-def fix_spelling_errors(t):
-    t = re.sub("[.,]","",t)
-    t = re.sub("^ ","",t)
-    t = re.sub(" $","",t)
-    t = re.sub("  "," ",t)
-    t = re.sub("informaiton","information",t)
-    t = re.sub("infromation","information",t)
-    t = re.sub("disclossure","disclosure",t)
-    t = re.sub("durration","duration",t)
-    t = re.sub("infomrational","informational",t)
-    t = re.sub("interpersona/","interpersonal/",t)
-    t = re.sub("faction","factual",t)
-    t = re.sub("initator","initiator",t)
-    t = re.sub("intiator","initiator",t)
-    t = re.sub("upon ","on ",t)
-    t = re.sub("treatment-specific","treatment-related",t)
-    t = re.sub("reflection","reflection on ones life",t)
-    t = re.sub("^information$","informational",t)
-    t = re.sub("^informational$","informational support",t)
-    t = re.sub("^emotional$","emotional support",t)
-    return t
+
 
 def split(column,trainpercentage):
     totalitemcount = len(column)
@@ -57,203 +35,266 @@ def split(column,trainpercentage):
 
 
 id_column = []
-target_column = []
+target_column_per_dimension = dict()
+categories_per_dimension = dict()
+
 content_column = []
 content_per_id = dict()
-categories = []
 number_of_items_per_target = dict()
 
-i = 0
-with open(posts_with_targets_file,'r') as posts_with_targets:
-    for line in posts_with_targets:
-        columns = line.rstrip().split('\t')
-        if 'threadid' in columns[0]:
-            continue
-        threadid,postid,author,timestamp,body,upvotes = columns[0:6]
-        if len(columns) > 6:
-            targets = columns[6].lower().split(", ")
-            item_id = threadid+"_"+postid
-            for target in targets:
-                target = fix_spelling_errors(target)
-                id_column.append(item_id)
+for filename in annotations_files:
+    print(filename)
+    book = open_workbook(filename,encoding_override='utf-8')
+    sheet = book.sheet_by_index(0)
+
+    # read header values into the list
+    keys = [sheet.cell(0, col_index).value for col_index in range(sheet.ncols)]
+    dimensions = keys[11:]
+
+    #dict_list = []
+    for row_index in range(1, sheet.nrows):
+        #index	appreciation_count	category	userid	token	thread_id	level	created_at	title	datetime	author	factual_share	emotion	question_information	question	question_support	narrative	discussion_start	reflection	factual	external_source	support	religious
+        item_id = sheet.cell(row_index, 0).value
+        if item_id in id_column:
+            print ("item is already in the data (by another annotator). Do not include twice")
+        else:
+            content = sheet.cell(row_index,4).value
+            content = re.sub("\?"," question_mark",content)
+            id_column.append(item_id)
+            content_column.append(content) #  classify on content only
+            content_per_id[item_id] = content
+
+            i = 11
+            for dimension in dimensions:
+                target = content = sheet.cell(row_index,i).value
+                if target == '':
+                    target = 'UNDEFINED'
+
+                categories = set()
+                target_column = []
+                if dimension in categories_per_dimension:
+                    categories = categories_per_dimension[dimension]
+                    target_column = target_column_per_dimension[dimension]
                 target_column.append(target)
-                #print (i,id_column[i],target_column[i])
-                i += 1
                 if target not in categories:
-                    #print (target)
-                    categories.append(target)
+                    categories.add(target)
+                if target not in number_of_items_per_target:
                     number_of_items_per_target[target] = 1
                 else:
                     number_of_items_per_target[target] += 1
-                #content = author+" "+body
-                content = body
-                content_column.append(content)
-                content_per_id[item_id] = content
+                target_column_per_dimension[dimension] = target_column
+                categories_per_dimension[dimension] = categories
 
 
-posts_with_targets.close()
+                i += 1
 
-noofitems = len(id_column)
-noofcats = len(categories)
-if len(id_column) != len(content_column) != len(target_column):
+
+print ("categories per dimension:",categories_per_dimension)
+print (len(id_column),id_column)
+print (len(content_column),content_column)
+#for dimension in target_column_per_dimension:
+#    print (dimension,len(target_column_per_dimension[dimension]),sep="\t")
+for target in number_of_items_per_target:
+    print (target,number_of_items_per_target[target],sep="\t")
+
+
+if len(id_column) != len(content_column):
     print ("\nERROR: columns are not the same length:",len(id_column),len(content_column), len(target_column))
     quit()
+noofitems = len(id_column)
+noofdimensions = len(categories_per_dimension)
 
-print("Total no of items in dataset: ",noofitems)
-print("Total no of categories in dataset: ",noofcats)
+
+print("Total no of items in dataset: ",noofitems,sep="\t")
+print("No of classification dimensions in dataset: ",noofdimensions,sep="\t")
 
 trainsplit = 50
 print ("Split:",trainsplit,"% training and remainder for testing")
-(trainset,testset) = split(content_column,trainsplit)
-(trainids,testids) = split(id_column,trainsplit)
-(trainsetcats,testsetcats) = split(target_column,trainsplit)
+sum_precision_per_method = dict()
+sum_recall_per_method = dict()
+sum_f1_per_method = dict()
+divide_by = dict()
+classifiers_names = set()
 
-#print ("TRAIN:",trainids)
-#print ("TEST:",testids)
+for dimension in categories_per_dimension:
+    print ("\n-------------\n",dimension,"\n-------------")
+    target_column = target_column_per_dimension[dimension]
 
-for testid in testids:
-    if testid in trainids:
-        print ("\nERROR: test item in train set!",testid)
-        quit()
+    (trainset,testset) = split(content_column,trainsplit)
+    (trainids,testids) = split(id_column,trainsplit)
+    (trainsetcats,testsetcats) = split(target_column,trainsplit)
 
-number_of_items_per_target_testset = dict()
-for target in testsetcats:
-    if target in number_of_items_per_target_testset:
-        number_of_items_per_target_testset[target] += 1
-    else:
-        number_of_items_per_target_testset[target] = 1
+    #print ("TRAIN:",trainids)
+    #print ("TEST:",testids)
 
-print ("\nNumber of items per category in the testset:")
-print (number_of_items_per_target_testset)
-ngram_vectorizer = CountVectorizer(analyzer='char_wb', ngram_range=(4, 4), min_df=1)
-word_vectorizer = CountVectorizer(analyzer='word', min_df=1)
+    for testid in testids:
+        if testid in trainids:
+            print ("\nERROR: test item in train set!",testid)
+            quit()
 
-vectorizernames = dict()
-vectorizernames[ngram_vectorizer] = "character_4-grams"
-vectorizernames[word_vectorizer] = "words"
+    number_of_items_per_target_testset = dict()
+    for target in testsetcats:
+        if target in number_of_items_per_target_testset:
+            number_of_items_per_target_testset[target] += 1
+        else:
+            number_of_items_per_target_testset[target] = 1
 
-best_f1=0
-best_recall = 0
-best_clf_vectorizer = ()
-errors_per_classifier = dict()
+    #print ("\nNumber of items per category in the testset:")
+    #print (number_of_items_per_target_testset)
+    #ngram_vectorizer = CountVectorizer(analyzer='char_wb', ngram_range=(4, 4), min_df=1)
+    word_vectorizer = CountVectorizer(analyzer='word', min_df=1)
 
-for vectorizer in vectorizernames:
+    vectorizernames = dict()
+    #vectorizernames[ngram_vectorizer] = "character_4-grams"
+    vectorizernames[word_vectorizer] = "words"
 
-    print ("Feature type:",vectorizernames[vectorizer])
-    Z_train = vectorizer.fit_transform(trainset)
-    #print ("Feature names:",vectorizer.get_feature_names())
-    print ("No of features:",len(vectorizer.get_feature_names()))
+    best_f1=0
+    best_recall = 0
+    best_clf_vectorizer = ()
+    errors_per_classifier = dict()
 
-    #tfidf_transformer = TfidfTransformer(use_idf=False)
-    tfidf_transformer = TfidfTransformer()
-    Z_train_tfidf = tfidf_transformer.fit_transform(Z_train)
-    print("Train dimensions:",Z_train_tfidf.shape)
-    #matrix = X.toarray()
-    Z_test = vectorizer.transform(testset)
-    Z_test_tfidf = tfidf_transformer.transform(Z_test)
-    print("Test dimensions:",Z_test_tfidf.shape)
-    #print ("Test set tfidf matrix:",Z_test_tfidf)
+    for vectorizer in vectorizernames:
 
-    #print (categories)
+        #print ("Feature type:",vectorizernames[vectorizer])
+        Z_train = vectorizer.fit_transform(trainset)
+        #print ("Feature names:",vectorizer.get_feature_names())
+        #print ("No of features:",len(vectorizer.get_feature_names()))
 
-    clfnames = dict()
+        #tfidf_transformer = TfidfTransformer(use_idf=False)
+        tfidf_transformer = TfidfTransformer()
+        Z_train_tfidf = tfidf_transformer.fit_transform(Z_train)
+        #print("Train dimensions:",Z_train_tfidf.shape)
+        #matrix = X.toarray()
+        Z_test = vectorizer.transform(testset)
+        Z_test_tfidf = tfidf_transformer.transform(Z_test)
+        #print("Test dimensions:",Z_test_tfidf.shape)
+        #print ("Test set tfidf matrix:",Z_test_tfidf)
 
-#    clf1 = MultinomialNB().fit(Z_train_tfidf,trainsetcats)
-    clf2 = LinearSVC().fit(Z_train_tfidf,trainsetcats)
-#    clf3 = Perceptron().fit(Z_train_tfidf,trainsetcats)
-#    clf4 = RandomForestClassifier().fit(Z_train_tfidf,trainsetcats)
-#    clf5 = KNeighborsClassifier().fit(Z_train_tfidf,trainsetcats)
-    clf6 = LogisticRegression(multi_class='ovr').fit(Z_train_tfidf,trainsetcats) # one-versus-all
-    #print("Params:", clf6.get_params())
-    #print("Intercept:",clf6.intercept_)
-    #print("Coefficients:",clf6.coef_[0])
+        #print (categories)
 
 
-#    clfnames[clf1] = "MultinomialNB"
-    clfnames[clf2] = "LinearSVC"
-#    clfnames[clf3] = "Perceptron"
-#    clfnames[clf4] = "RandomForestClassifier"
-#    clfnames[clf5] = "KNeighborsClassifier"
-    clfnames[clf6] = "LogisticRegression"
 
-    print ("\nMost important features according to LogisticRegression model:")
-    c =0
-    for target in categories:
-        if target not in number_of_items_per_target_testset:
-            continue
-        if number_of_items_per_target_testset[target] < 10:
-            continue
-        coefficients = clf6.coef_[c] #get the coefficients for the c's target
-        #print("No of coefficients:",len(coefficients))
+    #    clf1 = MultinomialNB().fit(Z_train_tfidf,trainsetcats)
+        clf2 = LinearSVC().fit(Z_train_tfidf,trainsetcats)
+    #    clf3 = Perceptron().fit(Z_train_tfidf,trainsetcats)
+    #    clf4 = RandomForestClassifier().fit(Z_train_tfidf,trainsetcats)
+    #    clf5 = KNeighborsClassifier().fit(Z_train_tfidf,trainsetcats)
+        clf6 = LogisticRegression(multi_class='ovr').fit(Z_train_tfidf,trainsetcats) # one-versus-all
+        #print("Params:", clf6.get_params())
+        #print("Intercept:",clf6.intercept_)
+        #print("Coefficients:",clf6.coef_[0])
 
-        feats_with_coefs = dict()
-        k=0
-        for featname in vectorizer.get_feature_names():
-            coef = coefficients[k]
-            feats_with_coefs[featname] = coef
-            k += 1
-        sorted_feats = sorted(feats_with_coefs.items(), key=operator.itemgetter(1), reverse=True)
+        clfnames = dict()
 
+    #    clfnames[clf1] = "MultinomialNB"
+        clfnames[clf2] = "LinearSVC"
+    #    clfnames[clf3] = "Perceptron"
+    #    clfnames[clf4] = "RandomForestClassifier"
+    #    clfnames[clf5] = "KNeighborsClassifier"
+        clfnames[clf6] = "LogisticRegression"
+        for clf in clfnames:
+            if clf not in classifiers_names:
+                classifiers_names.add(clfnames[clf])
 
-        print ("Top",vectorizernames[vectorizer],"for target \'",target,"\':")
-        for top in range(0,10):
-            print (sorted_feats[top])
-
-        c += 1
-
-#    classifiers = [clf1,clf2,clf3,clf4,clf5,clf6]
-    classifiers = [clf2,clf6]
-
-    for clf in classifiers:
-        errors = dict() # key is testid, value is correct target
-        errors.clear()
-        #out = open("classification."+vectorizernames[vectorizer]+"."+clfnames[clf]+".txt",'w')
-
-        predicted = clf.predict(Z_test_tfidf)
-        #print(predicted)
-        #print(testsetcats)
-
-        tp = 0
-        fp = dict() # key is category
-        fn = dict() # key is category
-        i=0
-        for testid in testids:
-            assigned = predicted[i]
-            correct = testsetcats[i]
-            #print(testid,correct,assigned)
-            if assigned == correct:
-                tp += 1
-            else:
-                if assigned in fp:
-                    fp[assigned] += 1
-                else:
-                    fp[assigned] = 1
-                if correct in fn:
-                    fn[correct] += 1
-                else:
-                    fn[correct] = 1
-                errors[testid] = correct
-                #print ("error:",testid)
-            #print (target,testid,assigned,correct)
-            i += 1
-        #out.close()
-        #print ("TP:",tp)
-        errors_per_classifier[(clfnames[clf],vectorizernames[vectorizer])] = errors
-
-        for target in categories:
-            if target not in number_of_items_per_target_testset:
+        print ("\nMost important features according to LogisticRegression model:")
+        c =0
+        for target in categories_per_dimension[dimension]:
+            if target not in number_of_items_per_target_testset or '_yes' not in target:
                 continue
             if number_of_items_per_target_testset[target] < 10:
                 continue
-            if not target in fp:
-                fp[target] = 0
-            if not target in fn:
-                fn[target] = 0
-            prec = float(tp)/(float(fp[target])+float(tp))
-            recall = float(tp)/(float(tp)+float(fn[target]))
-            f1 = 2*(prec*recall)/(prec+recall)
+            coefficients = clf6.coef_[c] #get the coefficients for the c's target
+            #print("No of coefficients:",len(coefficients))
 
-            print (target,"\t",number_of_items_per_target_testset[target],"\t",vectorizernames[vectorizer],"\t",clfnames[clf],"\t%.3f\t%.3f\t%.3f" % (prec,recall,f1))
+            feats_with_coefs = dict()
+            k=0
+            for featname in vectorizer.get_feature_names():
+                coef = coefficients[k]
+                feats_with_coefs[featname] = coef
+                k += 1
+            sorted_feats = sorted(feats_with_coefs.items(), key=operator.itemgetter(1), reverse=True)
+
+
+            print ("Top",vectorizernames[vectorizer],"for target \'",target,"\':")
+            for top in range(0,10):
+                print (sorted_feats[top])
+
+            c += 1
+
+    #    classifiers = [clf1,clf2,clf3,clf4,clf5,clf6]
+        classifiers = [clf2,clf6]
+
+        print("category\t# of items in testset\tfeature type\tclassifier\tprecision\trecall\tF1")
+
+        for clf in classifiers:
+            errors = dict() # key is testid, value is correct target
+            errors.clear()
+            #out = open("classification."+vectorizernames[vectorizer]+"."+clfnames[clf]+".txt",'w')
+
+            predicted = clf.predict(Z_test_tfidf)
+            #print(predicted)
+            #print(testsetcats)
+
+            tp = 0
+            fp = dict() # key is category
+            fn = dict() # key is category
+            i=0
+            for testid in testids:
+                assigned = predicted[i]
+                correct = testsetcats[i]
+                #print(testid,correct,assigned)
+                if assigned == correct:
+                    tp += 1
+                else:
+                    if assigned in fp:
+                        fp[assigned] += 1
+                    else:
+                        fp[assigned] = 1
+                    if correct in fn:
+                        fn[correct] += 1
+                    else:
+                        fn[correct] = 1
+                    errors[testid] = correct
+                    #print ("error:",testid)
+                #print (target,testid,assigned,correct)
+                i += 1
+            #out.close()
+            #print ("TP:",tp)
+            errors_per_classifier[(clfnames[clf],vectorizernames[vectorizer])] = errors
+
+            for target in categories_per_dimension[dimension]:
+                if target not in number_of_items_per_target_testset:
+                    continue
+                if number_of_items_per_target_testset[target] < 10:
+                    continue
+                if not target in fp:
+                    fp[target] = 0
+                if not target in fn:
+                    fn[target] = 0
+                prec = float(tp)/(float(fp[target])+float(tp))
+                recall = float(tp)/(float(tp)+float(fn[target]))
+                f1 = 2*(prec*recall)/(prec+recall)
+
+                #print (clfnames[clf])
+                if clfnames[clf] in sum_precision_per_method:
+                    sum_precision_per_method[clfnames[clf]] += prec
+                    sum_recall_per_method[clfnames[clf]] += recall
+                    sum_f1_per_method[clfnames[clf]] += f1
+                    divide_by[clfnames[clf]] +=1
+                else:
+                    sum_precision_per_method[clfnames[clf]] = prec
+                    sum_recall_per_method[clfnames[clf]] = recall
+                    sum_f1_per_method[clfnames[clf]] = f1
+                    divide_by[clfnames[clf]] = 1
 
 
 
+                print (target,"\t",number_of_items_per_target_testset[target],"\t",vectorizernames[vectorizer],"\t",clfnames[clf],"\t%.3f\t%.3f\t%.3f" % (prec,recall,f1))
+
+print ("\n-------------\nOverall\n-------------")
+
+#print (classifiers_names)
+for clfname in classifiers_names:
+    print("MACRO precision:",clfname,sum_precision_per_method[clfname]/divide_by[clfname],sep="\t")
+    print("MACRO recall:",clfname,sum_recall_per_method[clfname]/divide_by[clfname],sep="\t")
+    print("MACRO F1:",clfname,sum_f1_per_method[clfname]/divide_by[clfname],sep="\t")

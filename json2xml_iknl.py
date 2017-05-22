@@ -1,5 +1,5 @@
 # coding=utf-8
-# python json2xml_iknl.py discussions-formatted.json threads_dir KankerNL_posts.tsv
+# python json2xml_iknl.py discussions-formatted.json threads_dir KankerNL_posts_formatRemco.tsv
 
 """
  This script converts the IKNL discussions data from json to XML and tab-separated values (tsv).
@@ -29,6 +29,8 @@ tsvfilename = sys.argv[3]
 
 if not os.path.exists(out_dir):
     os.makedirs(out_dir)
+
+threads = dict()  # key is threadid, value is Object thread, to find the thread given the thread id
 
 
 class Thread:
@@ -88,11 +90,16 @@ class Post:
         out.write(self.body+"\n")
 
     def printTSV(self,threadid,out):
+        global threads
         body = clean_up(self.body)
-        out.write(threadid+"\t"+self.postid+"\t"+self.author+"\t"+self.timestamp+"\t"+body+"\t"+str(self.ups)+"\n")
+        threadforpost = threads[threadid]
+        level = ""
+        if threadid == self.postid:
+            level = "original_post"
+        # id	appreciation_count	author	category	created_at	level	thread_id	title	token
+        out.write(self.postid+"\t"+str(self.ups)+"\t"+self.author+"\t"+threadforpost.category+"\t"+self.timestamp+"\t"+level+"\t"+threadid+"\t"+threadforpost.title+"\t"+body+"\n")
 
 
-threads = dict()  # key is threadid, value is Object thread, to find the thread given the thread id
 
 
 with open(json_file) as f:
@@ -112,7 +119,8 @@ with open(json_file) as f:
         author = item['author']
         content = item['body']
         timestamp = item['created_at']
-        openingpost = Post(threadid,author,timestamp,content,"",0,0)
+        parentid = ""
+        openingpost = Post(threadid,author,timestamp,content,parentid,0,0)
 
         thread.addPost(openingpost)
 
@@ -142,7 +150,7 @@ for threadid in threads:
 
 
 tsv_file = open(tsvfilename,'w')
-tsv_file.write("threadid\tpostid\tauthor\ttimestamp\tbody\tupvotes\n")
+tsv_file.write("id\tappreciation_count\tauthor\tcategory\tcreated_at\tlevel\tthread_id\ttitle\ttoken\n")
 
 for threadid in threads:
     thread = threads[threadid]
