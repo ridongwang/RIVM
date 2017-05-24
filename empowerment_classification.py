@@ -1,4 +1,4 @@
-# pyton empowerment_classification.py Directory-with-xlsx-files/
+# pyton empowerment_classification.py /Users/suzanverberne/Data/FORUM_DATA/RIVM/Annotaties/concatenated_annotations.json
 
 import sys
 import re
@@ -13,13 +13,25 @@ from sklearn.neighbors import KNeighborsClassifier
 from sklearn.ensemble import RandomForestClassifier
 import operator
 from xlrd import open_workbook
+import json
 
+
+annotations_filename = sys.argv[1]
+
+dimensions = ("discussion_start","emotion","external_source","factual","factual_share","narrative",
+              "question","question_information","question_support","reflection","religious","support")
+
+main_dimensions = ("narrative","external_source","discussion_start","factual","question","support")
+
+
+'''
 annotations_dir = sys.argv[1]
-annotations_files = []
+
+xlsx_files = []
 for file in os.listdir(annotations_dir):
     if ".xlsx" in file and not "~" in file:
-        annotations_files.append(annotations_dir+"/"+file)
-
+        xlsx_files.append(annotations_dir+"/"+file)
+'''
 
 
 
@@ -35,88 +47,87 @@ def split(column,trainpercentage):
 
 
 id_column = []
-target_column_per_dimension = dict()
-categories_per_dimension = dict()
-
 content_column = []
 content_per_id = dict()
+target_column_per_dimension = dict()
+#categories_per_dimension = dict()
 number_of_items_per_target = dict()
 
-for filename in annotations_files:
+
+with open(annotations_filename) as annotations_file:
+    for line in annotations_file:
+        annotated_item = json.loads(line)
+        #print(annotated_item)
+        if 'token' in annotated_item and 'index' in annotated_item:
+            item_id = annotated_item['index']
+            content = annotated_item['token']
+            content = re.sub("\?","question_mark",content)
+
+            #print(content)
+            id_column.append(item_id)
+            content_column.append(content)
+            for dimension_name in main_dimensions:
+                target_column = []
+                if dimension_name in target_column_per_dimension:
+                    target_column = target_column_per_dimension[dimension_name]
+
+
+                key_yes = dimension_name+"_"+dimension_name+"_yes"
+                key_no = dimension_name+"_"+dimension_name+"_no"
+
+                if key_yes in annotated_item:
+
+                    if annotated_item[key_yes] == 1.0 or annotated_item[key_yes] == "2/2" or annotated_item[key_yes] == "3/3":
+                        target_column.append("yes")
+                    else:
+                        target_column.append("?")
+                        #print (item_id,key_yes,annotated_item[key_yes])
+                elif key_no in annotated_item:
+                    #print (key_no,annotated_item[key_no])
+                    if annotated_item[key_no] == 1.0 or annotated_item[key_no] == "2/2"or annotated_item[key_no] == "3/3":
+                        target_column.append("no")
+                    else:
+                        target_column.append("?")
+                        #print (item_id,key_no,annotated_item[key_no])
+                else:
+                    target_column.append("?")
+
+                target_column_per_dimension[dimension_name] = target_column
+
+print("number of items:",len(id_column),len(content_column))
+for dimension_name in main_dimensions:
+    print (dimension_name,len(target_column_per_dimension[dimension_name]),target_column_per_dimension[dimension_name])
+
+
+
+
+'''
+for filename in xlsx_files:
     print(filename)
     book = open_workbook(filename,encoding_override='utf-8')
     sheet = book.sheet_by_index(0)
 
     # read header values into the list
     keys = [sheet.cell(0, col_index).value for col_index in range(sheet.ncols)]
-    dimensions = keys[11:]
 
-    #dict_list = []
-    for row_index in range(1, sheet.nrows):
-        #index	appreciation_count	category	userid	token	thread_id	level	created_at	title	datetime	author	factual_share	emotion	question_information	question	question_support	narrative	discussion_start	reflection	factual	external_source	support	religious
-        item_id = sheet.cell(row_index, 0).value
-        if item_id in id_column:
-            print ("item is already in the data (by another annotator). Do not include twice")
-        else:
-            content = sheet.cell(row_index,4).value
-            content = re.sub("\?"," question_mark",content)
-            id_column.append(item_id)
-            content_column.append(content) #  classify on content only
-            content_per_id[item_id] = content
+'''
 
-            i = 11
-            for dimension in dimensions:
-                target = content = sheet.cell(row_index,i).value
-                if target == '':
-                    target = 'UNDEFINED'
-
-                categories = set()
-                target_column = []
-                if dimension in categories_per_dimension:
-                    categories = categories_per_dimension[dimension]
-                    target_column = target_column_per_dimension[dimension]
-                target_column.append(target)
-                if target not in categories:
-                    categories.add(target)
-                if target not in number_of_items_per_target:
-                    number_of_items_per_target[target] = 1
-                else:
-                    number_of_items_per_target[target] += 1
-                target_column_per_dimension[dimension] = target_column
-                categories_per_dimension[dimension] = categories
-
-
-                i += 1
-
-
-print ("categories per dimension:",categories_per_dimension)
-print (len(id_column),id_column)
-print (len(content_column),content_column)
-#for dimension in target_column_per_dimension:
-#    print (dimension,len(target_column_per_dimension[dimension]),sep="\t")
-for target in number_of_items_per_target:
-    print (target,number_of_items_per_target[target],sep="\t")
 
 
 if len(id_column) != len(content_column):
     print ("\nERROR: columns are not the same length:",len(id_column),len(content_column), len(target_column))
     quit()
-noofitems = len(id_column)
-noofdimensions = len(categories_per_dimension)
 
-
-print("Total no of items in dataset: ",noofitems,sep="\t")
-print("No of classification dimensions in dataset: ",noofdimensions,sep="\t")
 
 trainsplit = 50
-print ("Split:",trainsplit,"% training and remainder for testing")
+print ("\nSplit:",trainsplit,"% training and remainder for testing")
 sum_precision_per_method = dict()
 sum_recall_per_method = dict()
 sum_f1_per_method = dict()
 divide_by = dict()
 classifiers_names = set()
 
-for dimension in categories_per_dimension:
+for dimension in main_dimensions:
     print ("\n-------------\n",dimension,"\n-------------")
     target_column = target_column_per_dimension[dimension]
 
@@ -197,29 +208,26 @@ for dimension in categories_per_dimension:
                 classifiers_names.add(clfnames[clf])
 
         print ("\nMost important features according to LogisticRegression model:")
-        c =0
-        for target in categories_per_dimension[dimension]:
-            if target not in number_of_items_per_target_testset or '_yes' not in target:
-                continue
-            if number_of_items_per_target_testset[target] < 10:
-                continue
-            coefficients = clf6.coef_[c] #get the coefficients for the c's target
-            #print("No of coefficients:",len(coefficients))
+        c=0
+        for target in clf6.classes_:
+            if target =="yes":
+                coefficients = clf6.coef_[c] #get the coefficients for the c's target
+                #print("No of coefficients:",len(coefficients))
 
-            feats_with_coefs = dict()
-            k=0
-            for featname in vectorizer.get_feature_names():
-                coef = coefficients[k]
-                feats_with_coefs[featname] = coef
-                k += 1
-            sorted_feats = sorted(feats_with_coefs.items(), key=operator.itemgetter(1), reverse=True)
+                feats_with_coefs = dict()
+                k=0
+                for featname in vectorizer.get_feature_names():
+                    coef = coefficients[k]
+                    feats_with_coefs[featname] = coef
+                    k += 1
+                sorted_feats = sorted(feats_with_coefs.items(), key=operator.itemgetter(1), reverse=True)
 
 
-            print ("Top",vectorizernames[vectorizer],"for target \'",target,"\':")
-            for top in range(0,10):
-                print (sorted_feats[top])
-
+                print ("Top",vectorizernames[vectorizer],"for '",dimension,"'")
+                for top in range(0,10):
+                    print (sorted_feats[top])
             c += 1
+
 
     #    classifiers = [clf1,clf2,clf3,clf4,clf5,clf6]
         classifiers = [clf2,clf6]
@@ -262,7 +270,7 @@ for dimension in categories_per_dimension:
             #print ("TP:",tp)
             errors_per_classifier[(clfnames[clf],vectorizernames[vectorizer])] = errors
 
-            for target in categories_per_dimension[dimension]:
+            for target in ('yes','no'):
                 if target not in number_of_items_per_target_testset:
                     continue
                 if number_of_items_per_target_testset[target] < 10:
@@ -289,7 +297,7 @@ for dimension in categories_per_dimension:
 
 
 
-                print (target,"\t",number_of_items_per_target_testset[target],"\t",vectorizernames[vectorizer],"\t",clfnames[clf],"\t%.3f\t%.3f\t%.3f" % (prec,recall,f1))
+                print (dimension+"_"+target,"\t",number_of_items_per_target_testset[target],"\t",vectorizernames[vectorizer],"\t",clfnames[clf],"\t%.3f\t%.3f\t%.3f" % (prec,recall,f1))
 
 print ("\n-------------\nOverall\n-------------")
 
@@ -298,3 +306,6 @@ for clfname in classifiers_names:
     print("MACRO precision:",clfname,sum_precision_per_method[clfname]/divide_by[clfname],sep="\t")
     print("MACRO recall:",clfname,sum_recall_per_method[clfname]/divide_by[clfname],sep="\t")
     print("MACRO F1:",clfname,sum_f1_per_method[clfname]/divide_by[clfname],sep="\t")
+
+
+
