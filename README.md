@@ -43,7 +43,7 @@ The input format is the discussion thread XML format defined for the Discosumo p
 
 # empowerment_classification.py
 
-Performs supervised classification of labeled forum posts. The format of the input file is tab-separated text with in the 7th (final) column the comma-separated labels:
+Performs supervised classification of labeled forum posts (documentation is in the script). The format of the input file is tab-separated text with in the 7th (final) column the comma-separated labels:
 ```
 threadid	postid	author	timestamp	body	upvotes	labels
 ```

@@ -1,37 +1,51 @@
 # pyton empowerment_classification.py /Users/suzanverberne/Data/FORUM_DATA/RIVM/Annotaties/concatenated_annotations.json forum_threads/all_KankerNL_threads.xml kankerNL_posts_labeled_automatically.tab
 
+# In the trainset we include only items where the raters agree and the assigned value is non-empty (yes or no)
+# In the testset we include also the items where the raters did not agree (value for 1 rater)
+
 import sys
 import re
 #import os
 from sklearn.feature_extraction.text import CountVectorizer
 from sklearn.feature_extraction.text import TfidfTransformer
-from sklearn.naive_bayes import MultinomialNB
 from sklearn.svm import LinearSVC
-from sklearn.linear_model import Perceptron
-from sklearn.linear_model import LogisticRegression
-from sklearn.neighbors import KNeighborsClassifier
-from sklearn.ensemble import RandomForestClassifier
-import operator
+
 import xml.etree.ElementTree as ET
 #from xlrd import open_workbook
 import json
+import numpy
+#from matplotlib import pyplot as plt
 
+
+''' use _tune = True if the script is run to compare different values for the c parameter '''
+#_tune = True
+_tune = False
+
+print ("TUNE:",_tune)
 
 annotations_filename = sys.argv[1]
 corpus_path = sys.argv[2]
 outfile = sys.argv[3]
+author_json_file = "authors-formatted.json"
 
 dimensions = ("narrative","emotion","factual","reflection","religious",
-              "external_source","discussion_start","factual_share",
-              "question","question_support","question_information","support")
+              "external_source","informational_support",
+              "question","question_support","question_information","emotional_support")
 
-main_dimensions = ("narrative","external_source","discussion_start","factual_share","question","support")
+main_dimensions = ("narrative","external_source","informational_support","question","emotional_support")
+# we removed discussion_start as dimension, because it is not an empowerment construct
+# we replaced factual_share by informational_support
+# and support by emotional_support during the reading of the annotations file
 
+'''
+we don't include the sub dimensions in our experiments
 sub_dimensions = dict()
 sub_dimensions["narrative"] = ("emotion","factual","reflection","religious")
 sub_dimensions["question"] = ("question_support","question_information")
+'''
 
 '''
+FULL CODEBOOK:
 1. Narratief - narrative
 a) narratief met emoties - emotion
 b) feitelijk narratief - factual
@@ -52,6 +66,13 @@ b) vraag om informatie - Question Information
 '''
 
 
+def tokenize(t):
+    text = t.lower()
+    text = re.sub("\n"," ",text)
+    text = re.sub(r'<[^>]+>',"",text) # remove all html markup
+    text = re.sub('[^a-zèéeêëėęûüùúūôöòóõœøîïíīįìàáâäæãåçćč&@#A-ZÇĆČÉÈÊËĒĘÛÜÙÚŪÔÖÒÓŒØŌÕÎÏÍĪĮÌ0-9- \']', "", text)
+    wrds = text.split()
+    return wrds
 
 
 def split(column,trainpercentage):
@@ -63,35 +84,41 @@ def split(column,trainpercentage):
     return trainset,testset
 
 
-def add_value_to_target_column(target_column,dimension_name):
+def add_value_to_target_column(target_column,dimension_name,in_trainpart):
+    """
+    we need this function because we treat the training data different than the test data:
+    We included in the training set only the items where the raters agreed in order to avoid having conflicting training data.
+    In the test set we did include the items where the raters did not agree (value for one of the two raters),
+    because the quality of the classifier would be overestimated if only the agreed (clear) instances were included.
+    """
     key_yes = dimension_name+"_"+dimension_name+"_yes"
     key_no = dimension_name+"_"+dimension_name+"_no"
-    target_column_updated = []
-    #for item in target_column:
-    #    target_column_updated.append(item)
+
     target_column_updated = target_column[:]
     if key_yes in annotated_item:
 
         if annotated_item[key_yes] == 1.0 or annotated_item[key_yes] == "2/2" or annotated_item[key_yes] == "3/3":
+            # only one rater, or all raters agree on 'yes'
             target_column_updated.append("yes")
-        #else:
-            #target_column.append("?")
-            #print (item_id,key_yes,annotated_item[key_yes])
+        elif not in_trainpart and annotated_item[key_yes] == "1/2" or annotated_item[key_yes] == "2/3":
+            # If the raters disagree, but at least one gave the value yes, add the item to the testset
+            target_column_updated.append("yes")
+
     elif key_no in annotated_item:
-        #print (key_no,annotated_item[key_no])
         if annotated_item[key_no] == 1.0 or annotated_item[key_no] == "2/2"or annotated_item[key_no] == "3/3":
+            # only one rater, or all raters agree on 'no'
             target_column_updated.append("no")
-        #else:
-            #target_column.append("?")
-            #print (item_id,key_no,annotated_item[key_no])
-    #else:
-        #target_column.append("?")
+        elif not in_trainpart and annotated_item[key_no] == "1/2" or annotated_item[key_no] == "2/3":
+            # If the raters disagree, but at least one gave the value no, add the item to the testset
+            target_column_updated.append("no")
+
+    # if the two raters disagree, or if (one of the) rater(s) did not enter a value,
+    # do not add the value to the target column for the trainset.
+
     return target_column_updated
 
+
 '''MAIN'''
-
-
-
 
 
 id_column_per_dimension = dict()
@@ -102,9 +129,37 @@ target_column_per_dimension = dict()
 number_of_items_per_target = dict()
 
 
+number_of_items = sum(1 for line in open(annotations_filename))
+
+train_and_tunesplit = 80
+tunesplit = 25
+absolute_tunesplit = float(tunesplit)/100*float(train_and_tunesplit)/100*100
+trainsplit = train_and_tunesplit-absolute_tunesplit
+testsplit = 100-float(train_and_tunesplit)
+print ("\nSplit:",train_and_tunesplit,"% for training and tuning of which",tunesplit,"% for tuning")
+print("-->",trainsplit,"% for training,",absolute_tunesplit,"% for tuning, and",testsplit,"% for testing")
+
+in_trainpart = True
+itemcounter = 0
 with open(annotations_filename) as annotations_file:
     for line in annotations_file:
-        line = re.sub("reflection_reflective","reflection_reflection",line)
+        #print (line)
+        ''' fix some inconsistensies in the output of the manual annotation '''
+        line = re.sub("\"reflection_reflective_","\"reflection_reflection_",line)
+        line = re.sub("\"factual_share_factual_share_","\"informational_support_informational_support_",line)
+        line = re.sub("\"support_support_","\"emotional_support_emotional_support_",line)
+        #print (line)
+
+        itemcounter += 1
+
+        ''' if we are tuning the c parameter, we train on only the train part of the train_and_tune_set '''
+        splitpoint = train_and_tunesplit
+        if _tune:
+            splitpoint = trainsplit
+
+        if itemcounter >= splitpoint/100*number_of_items:
+            in_trainpart = False
+
         annotated_item = json.loads(line)
         #print(annotated_item)
         if 'token' in annotated_item and 'index' in annotated_item:
@@ -115,6 +170,7 @@ with open(annotations_filename) as annotations_file:
             #print(content)
 
             for dimension_name in main_dimensions:
+
                 id_column = []
                 content_column = []
                 target_column = []
@@ -123,12 +179,13 @@ with open(annotations_filename) as annotations_file:
                     content_column = content_column_per_dimension[dimension_name]
                     target_column = target_column_per_dimension[dimension_name]
 
-
-                target_column_updated = add_value_to_target_column(target_column,dimension_name)
+                target_column_updated = add_value_to_target_column(target_column,dimension_name,in_trainpart)
                 if len(target_column_updated) > len(target_column):
-                    # if target_column_updated is the same length as target_column than no value was added
-                    # this happens if the value is empty, or if the two raters did not agree
-                    #print ("value added",len(target_column), len(target_column_updated))
+                    """
+                    if target_column_updated is the same length as target_column than no value was added
+                    this happens if the value is empty, or if the two raters did not agree
+                    print ("value added",len(target_column), len(target_column_updated))
+                    """
                     id_column.append(item_id)
                     content_column.append(content)
                     target_column = target_column_updated
@@ -137,6 +194,7 @@ with open(annotations_filename) as annotations_file:
                 content_column_per_dimension[dimension_name] = content_column
                 target_column_per_dimension[dimension_name] = target_column
 
+                '''
                 if dimension_name in sub_dimensions:
                     key_yes = dimension_name+"_"+dimension_name+"_yes"
                     if key_yes in annotated_item:
@@ -150,7 +208,7 @@ with open(annotations_filename) as annotations_file:
                                 content_column = content_column_per_dimension[sub_dimension_name]
                                 sub_target_column = target_column_per_dimension[sub_dimension_name]
 
-                            sub_target_column_updated = add_value_to_target_column(sub_target_column,sub_dimension_name)
+                            sub_target_column_updated = add_value_to_target_column(sub_target_column,sub_dimension_name,in_trainpart)
                             if len(sub_target_column_updated) > len(sub_target_column):
                             # if target_column_updated is the same length as target_column than no value was added
                             # this happens if the value is empty, or if the two raters did not agree
@@ -161,23 +219,75 @@ with open(annotations_filename) as annotations_file:
                             id_column_per_dimension[sub_dimension_name] = id_column
                             content_column_per_dimension[sub_dimension_name] = content_column
                             target_column_per_dimension[sub_dimension_name] = sub_target_column
+                '''
 
+
+'''
+split data in train and test
+'''
+train_and_tuneset_per_dimension = dict()
+train_and_tuneids_per_dimension = dict()
+train_and_tunesetcats_per_dimension = dict()
+
+testset_per_dimension = dict()
+testids_per_dimension = dict()
+testsetcats_per_dimension = dict()
+
+for dimension in main_dimensions:
+    #print ("dimension:",dimension)
+    train_and_tuneset_per_dimension[dimension],testset_per_dimension[dimension] = split(content_column_per_dimension[dimension],train_and_tunesplit)
+    train_and_tuneids_per_dimension[dimension],testids_per_dimension[dimension] = split(id_column_per_dimension[dimension],train_and_tunesplit)
+    train_and_tunesetcats_per_dimension[dimension],testsetcats_per_dimension[dimension] = split(target_column_per_dimension[dimension],train_and_tunesplit)
+
+
+'''
+split training data in train and tune
+'''
+trainset_per_dimension = dict()
+trainids_per_dimension = dict()
+trainsetcats_per_dimension = dict()
+
+tuneset_per_dimension = dict()
+tuneids_per_dimension = dict()
+tunesetcats_per_dimension = dict()
+
+for dimension in main_dimensions:
+    #print ("dimension:",dimension)
+    trainset_per_dimension[dimension],tuneset_per_dimension[dimension] = split(train_and_tuneset_per_dimension[dimension],100-tunesplit)
+    trainids_per_dimension[dimension],tuneids_per_dimension[dimension] = split(train_and_tuneids_per_dimension[dimension],100-tunesplit)
+    trainsetcats_per_dimension[dimension],tunesetcats_per_dimension[dimension] = split(train_and_tunesetcats_per_dimension[dimension],100-tunesplit)
+
+if _tune:
+    testset_per_dimension = tuneset_per_dimension
+    testids_per_dimension = tuneids_per_dimension
+    testsetcats_per_dimension = tunesetcats_per_dimension
 
 
 annotations_file.close()
-for dimension_name in main_dimensions:
-    print (dimension_name,"\t",len(id_column_per_dimension[dimension_name]))#len(target_column_per_dimension[dimension_name]),target_column_per_dimension[dimension_name])
 
+
+for dimension_name in main_dimensions:
+    print (dimension_name,"\ttrain:",len(trainids_per_dimension[dimension_name]),"\ttune:",len(tuneids_per_dimension[dimension_name]),"\ttest:",len(testids_per_dimension[dimension_name]))
+
+    '''
     if dimension_name in sub_dimensions:
         for sub_dimension_name in sub_dimensions[dimension_name]:
-            print ("   +",sub_dimension_name,"\t",len(id_column_per_dimension[sub_dimension_name]))#,len(target_column_per_dimension[sub_dimension_name]),target_column_per_dimension[sub_dimension_name])
+            print ("   +",sub_dimension_name,"\ttrain:",len(trainids_per_dimension[dimension_name]),"\ttune:",len(tuneids_per_dimension[dimension_name]),"\ttest:",len(testids_per_dimension[dimension_name]))
+    '''
 
-print ("Read unlabeled data")
+print ("\ndimension\t# of yes\t# of no")
+for dimension_name in main_dimensions:
+    print(dimension_name,trainsetcats_per_dimension[dimension_name].count("yes")+testsetcats_per_dimension[dimension_name].count("yes"),
+          trainsetcats_per_dimension[dimension_name].count("no")+testsetcats_per_dimension[dimension_name].count("no"),sep="\t")
+
+
+print ("\nRead unlabeled data")
 unlabeled_content_column = []
 unlabeled_id_column = []
 unlabeled_author_column = []
 unlabeled_timestamp_column = []
 posts_per_author = dict()
+postlengths_per_author = dict() #key is author id, value is array of postlengths
 
 with open (corpus_path,'r') as xml_file:
     tree = ET.parse(xml_file)
@@ -201,55 +311,67 @@ with open (corpus_path,'r') as xml_file:
                 unlabeled_id_column.append(item_id)
                 unlabeled_author_column.append(author)
                 unlabeled_timestamp_column.append(timestamp)
+                postlength = len(tokenize(content))
                 posts_for_this_author = []
+                postlengths_for_this_author = []
                 if author in posts_per_author:
                     posts_for_this_author = posts_per_author[author]
+                    postlengths_for_this_author = postlengths_per_author[author]
                 posts_for_this_author.append(item_id)
+                postlengths_for_this_author.append(postlength)
                 posts_per_author[author] = posts_for_this_author
-
-'''
-for filename in xlsx_files:
-    print(filename)
-    book = open_workbook(filename,encoding_override='utf-8')
-    sheet = book.sheet_by_index(0)
-
-    # read header values into the list
-    keys = [sheet.cell(0, col_index).value for col_index in range(sheet.ncols)]
-
-'''
+                postlengths_per_author[author] = postlengths_for_this_author
 
 
+number_of_contacts = dict() # key is author id
+with open(author_json_file) as f:
+    json_string = ""
+
+    for line in f:
+        json_string += line.rstrip()
+    parsed_json = json.loads(json_string)
+    for item in parsed_json:
+        #print(item)
+        author_id = item['id']
+        contacts = item['contacts']
+        number_of_contacts[author_id] = len(contacts)
+
+print("\nNumber of occurrences in labelled data (train set)")
+for dimension in main_dimensions:
+    trainsetcats = trainsetcats_per_dimension[dimension]
+    print(dimension,trainsetcats.count('yes'),sep="\t")
 
 
-
-
-trainsplit = 50
-print ("\nSplit:",trainsplit,"% training and remainder for testing")
 sum_precision_per_method = dict()
 sum_recall_per_method = dict()
 sum_f1_per_method = dict()
 divide_by = dict()
 classifiers_names = set()
 
-for dimension in dimensions:
-    if dimension in main_dimensions:
-        print ("\n-------------\nMAIN DIMENSION:",dimension,"\n-------------")
-    else:
-        print ("\n-------------\nSUB DIMENSION:",dimension,"\n-------------")
+for dimension in main_dimensions:
 
-    id_column = id_column_per_dimension[dimension]
-    content_column = content_column_per_dimension[dimension]
-    target_column = target_column_per_dimension[dimension]
 
-    print (len(id_column),len(content_column), len(target_column))
+    #id_column = id_column_per_dimension[dimension]
+    #content_column = content_column_per_dimension[dimension]
+    #target_column = target_column_per_dimension[dimension]
 
-    if len(id_column) != len(target_column):
-        print ("\nERROR: columns are not the same length:",len(id_column),len(content_column), len(target_column))
+
+    trainset = trainset_per_dimension[dimension]
+    testset = testset_per_dimension[dimension]
+    trainids = trainids_per_dimension[dimension]
+    testids = testids_per_dimension[dimension]
+    trainsetcats = trainsetcats_per_dimension[dimension]
+    testsetcats = testsetcats_per_dimension[dimension]
+
+    print ("train:",len(trainset),len(trainids), len(trainsetcats))
+    print ("test:",len(testset),len(testids), len(testsetcats))
+
+    if len(trainset) != len(trainsetcats):
+        print ("\nERROR: columns trainset are not the same length:",len(trainset),len(trainsetcats))
         quit()
-
-    (trainset,testset) = split(content_column,trainsplit)
-    (trainids,testids) = split(id_column,trainsplit)
-    (trainsetcats,testsetcats) = split(target_column,trainsplit)
+    if len(testset) != len(testsetcats):
+        print ("\nERROR: columns testset are not the same length:",len(testset),len(testsetcats))
+        quit()
 
     #print ("TRAIN:",trainids)
     #print ("TEST:",testids)
@@ -282,101 +404,74 @@ for dimension in dimensions:
 
     for vectorizer in vectorizernames:
 
-        #print ("Feature type:",vectorizernames[vectorizer])
         Z_train = vectorizer.fit_transform(trainset)
-        #print ("Feature names:",vectorizer.get_feature_names())
-        #print ("No of features:",len(vectorizer.get_feature_names()))
-
-        #tfidf_transformer = TfidfTransformer(use_idf=False)
         tfidf_transformer = TfidfTransformer()
         Z_train_tfidf = tfidf_transformer.fit_transform(Z_train)
-        #print("Train dimensions:",Z_train_tfidf.shape)
-        #matrix = X.toarray()
+
         Z_test = vectorizer.transform(testset)
         Z_test_tfidf = tfidf_transformer.transform(Z_test)
-        #print("Test dimensions:",Z_test_tfidf.shape)
-        #print ("Test set tfidf matrix:",Z_test_tfidf)
-
-        #print (categories)
 
 
-
-    #    clf1 = MultinomialNB().fit(Z_train_tfidf,trainsetcats)
-        clf2 = LinearSVC().fit(Z_train_tfidf,trainsetcats)
-    #    clf3 = Perceptron().fit(Z_train_tfidf,trainsetcats)
-    #    clf4 = RandomForestClassifier().fit(Z_train_tfidf,trainsetcats)
-    #    clf5 = KNeighborsClassifier().fit(Z_train_tfidf,trainsetcats)
-        clf6 = LogisticRegression(multi_class='ovr').fit(Z_train_tfidf,trainsetcats) # one-versus-all
-        #print("Params:", clf6.get_params())
-        #print("Intercept:",clf6.intercept_)
-        #print("Coefficients:",clf6.coef_[0])
-
+        svm_clfs = []
         clfnames = dict()
 
-    #    clfnames[clf1] = "MultinomialNB"
-        clfnames[clf2] = "LinearSVC"
-    #    clfnames[clf3] = "Perceptron"
-    #    clfnames[clf4] = "RandomForestClassifier"
-    #    clfnames[clf5] = "KNeighborsClassifier"
-        clfnames[clf6] = "LogisticRegression"
+        if _tune:
+            for c in [0.0001,0.001,0.01,0.1,1.0,10.0,100.0,1000.0]:
+                clf = LinearSVC(C=c).fit(Z_train_tfidf,trainsetcats)
+                svm_clfs.append(clf)
+                clfnames[clf] = "LinearSVC_"+str(c)
+        else:
+            clf = LinearSVC(C=1.0).fit(Z_train_tfidf,trainsetcats)
+            svm_clfs.append(clf)
+            clfnames[clf] = "LinearSVC"
+
+
         for clf in clfnames:
             if clf not in classifiers_names:
                 classifiers_names.add(clfnames[clf])
 
-        print ("\nMost important features according to LogisticRegression model:")
-        '''
-        c=0
-        print(dimension,clf6.classes_)
-        for target in clf6.classes_:
-            print (c,target,clf6.coef_[c])
-            if target =="yes":
-                print ("yes!",c,target,clf6.classes_[c])
 
-                coefficients = clf6.coef_[c] #get the coefficients for the c's target
-                '''
-        coefficients = clf6.coef_[0]
-        print("No of coefficients:",len(coefficients))
-
-        feats_with_coefs = dict()
-        k=0
-        for featname in vectorizer.get_feature_names():
-            coef = coefficients[k]
-            feats_with_coefs[featname] = coef
-            k += 1
-        sorted_feats = sorted(feats_with_coefs.items(), key=operator.itemgetter(1), reverse=True)
-
-
-        print ("Top",vectorizernames[vectorizer],"for '",dimension,"'")
-        for top in range(0,10):
-            print (sorted_feats[top])
-
-            #c += 1
-
-
-    #    classifiers = [clf1,clf2,clf3,clf4,clf5,clf6]
-        classifiers = [clf2,clf6]
+        classifiers = svm_clfs
 
         print("category\t# of items in testset\tfeature type\tclassifier\tprecision\trecall\tF1")
 
         for clf in classifiers:
             errors = dict() # key is testid, value is correct target
             errors.clear()
-            #out = open("classification."+vectorizernames[vectorizer]+"."+clfnames[clf]+".txt",'w')
 
             predicted = clf.predict(Z_test_tfidf)
-            #print(predicted)
-            #print(testsetcats)
+            print("yes predicted:",list(predicted).count("yes"),"no predicted:",list(predicted).count("no"))
+            print("yes true:",list(testsetcats).count("yes"),"no true:",list(predicted).count("no"))
 
-            tp = 0
+            decision_values = clf.decision_function(Z_test_tfidf)
+
+            onezerolabels = []
+            for cat in testsetcats:
+                if cat =="yes":
+                    onezerolabels.append(1)
+                else:
+                    onezerolabels.append(0)
+            #precision, recall, thresholds = sklearn.metrics.precision_recall_curve(onezerolabels, decision_values)
+            #plt.plot(recall, precision)
+            #plt.show()
+
+
+            tp = dict() # key is category
             fp = dict() # key is category
             fn = dict() # key is category
             i=0
             for testid in testids:
                 assigned = predicted[i]
                 correct = testsetcats[i]
-                #print(testid,correct,assigned)
                 if assigned == correct:
-                    tp += 1
+                    if assigned in tp:
+                        tp[assigned] += 1
+                    else:
+                        tp[assigned] = 1
+                    if correct in tp:
+                        tp[correct] += 1
+                    else:
+                        tp[correct] = 1
                 else:
                     if assigned in fp:
                         fp[assigned] += 1
@@ -390,24 +485,29 @@ for dimension in dimensions:
                     #print ("error:",testid)
                 #print (target,testid,assigned,correct)
                 i += 1
-            #out.close()
-            #print ("TP:",tp)
+
             errors_per_classifier[(clfnames[clf],vectorizernames[vectorizer])] = errors
 
-            for target in ('yes','no'):
+            for target in ['yes']:
                 if target not in number_of_items_per_target_testset:
                     continue
-                if number_of_items_per_target_testset[target] < 10:
-                    continue
+
                 if not target in fp:
                     fp[target] = 0
                 if not target in fn:
                     fn[target] = 0
-                prec = float(tp)/(float(fp[target])+float(tp))
-                recall = float(tp)/(float(tp)+float(fn[target]))
-                f1 = 2*(prec*recall)/(prec+recall)
+                if not target in tp:
+                    tp[target] = 0
+                print (dimension,clfnames[clf],"tp:",tp,"fp:",fp)
+                prec = 0.0
+                if float(fp[target])+float(tp[target]) > 0.0:
+                    prec = float(tp[target])/(float(fp[target])+float(tp[target]))
+                recall = float(tp[target])/(float(tp[target])+float(fn[target]))
+                f1 = 0.0
+                if prec+recall > 0.0:
+                    f1 = 2*(prec*recall)/(prec+recall)
 
-                #print (clfnames[clf])
+                print (clfnames[clf])
                 if clfnames[clf] in sum_precision_per_method:
                     sum_precision_per_method[clfnames[clf]] += prec
                     sum_recall_per_method[clfnames[clf]] += recall
@@ -435,7 +535,7 @@ for clfname in classifiers_names:
     print("MACRO F1:",clfname,sum_f1_per_method[clfname]/divide_by[clfname],sep="\t")
 
 
-print ("\nTrain classifier on all labeled data and classify unlabeled data (for each dimension)")
+print ("\nClassify unlabeled data (for each dimension)")
 word_vectorizer = CountVectorizer(analyzer='word', min_df=1)
 tfidf_transformer = TfidfTransformer()
 
@@ -447,9 +547,12 @@ timestamp_of_post = dict() # key is (threadid, postid), value is post author
 for dimension in main_dimensions:
     print (dimension)
     # train classifier on all labeled data (not only the 50% train split)
-    labeled_id_column = id_column_per_dimension[dimension]
-    labeled_content_column = content_column_per_dimension[dimension]
-    labeled_target_column = target_column_per_dimension[dimension]
+    labeled_id_column = trainids_per_dimension[dimension]
+    labeled_content_column = trainset_per_dimension[dimension]
+    labeled_target_column = trainsetcats_per_dimension[dimension]
+
+    print ("size of training set:",len(labeled_id_column),len(labeled_content_column),len(labeled_target_column))
+
     Z_train = word_vectorizer.fit_transform(labeled_content_column)
     Z_train_tfidf = tfidf_transformer.fit_transform(Z_train)
     # we have to transform the unlabeled data using the same dimensions as the train data (so 'transform' instead of 'fit_transform')
@@ -506,7 +609,7 @@ for (threadid,postid) in posts_with_labels:
 out.close()
 
 print("\nPer author:")
-print ("author","number_of_posts","\t".join(main_dimensions),sep="\t")
+print ("author","number_of_posts","average_postlength","number_of_contacts","\t".join(main_dimensions),sep="\t")
 for author in label_count_per_author:
 
     #if len(posts_per_author[author]) > 30:
@@ -520,8 +623,10 @@ for author in label_count_per_author:
             labelcounts.append(relative_count)
         else:
             labelcounts.append(0.0)
+    #print (author,postlengths_per_author[author])
+    mean_postlength = numpy.mean(postlengths_per_author[author])
 
-    print (author,len(posts_per_author[author]),"\t".join(str(x) for x in labelcounts),sep="\t")
+    print (author,len(posts_per_author[author]),mean_postlength,number_of_contacts[author],"\t".join(str(x) for x in labelcounts),sep="\t")
 
 print ("\nStats:")
 print ("number of posts",number_of_posts,sep="\t")
