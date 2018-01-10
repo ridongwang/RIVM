@@ -48,8 +48,7 @@ Performs supervised classification of labeled forum posts (documentation is in t
 threadid	postid	author	timestamp	body	upvotes	labels
 ```
 
-It makes a 50-50 split in train and test data and reports Precision, Recall and F-scores per categorie in the data (for categories with at least 10 examples in the test set).
-It also prints the list of 10 most important features (words or character 4-grams) per category according to the LogisticRegression model.
+It makes a split in train and test data and reports Precision, Recall and F-scores per categorie in the test data. It also labels the unlabeled data with empowerment constructs, using all data to train on.
 
 # longitudinal.py
 
